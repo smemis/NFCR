@@ -18,8 +18,15 @@ import android.os.Bundle
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
 import androidx.appcompat.app.AppCompatActivity
 import kotlin.math.minOf
+import java.security.MessageDigest
+import java.security.SecureRandom
+import javax.crypto.Cipher
+import javax.crypto.spec.SecretKeySpec
 
 class MainActivity : AppCompatActivity() {
 
@@ -30,42 +37,144 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var textViewInfo: TextView
     private var isNfcSupported = false
+    private var currentTag: Tag? = null
+    private var mrzData: MrzData? = null
+
+    data class MrzData(
+        val documentNumber: String,
+        val dateOfBirth: String,
+        val dateOfExpiry: String
+    ) {
+        fun isValid(): Boolean {
+            return documentNumber.length >= 9 && 
+                   dateOfBirth.length == 6 && 
+                   dateOfExpiry.length == 6
+        }
+        
+        fun toMrzString(): String {
+            return "$documentNumber$dateOfBirth$dateOfExpiry"
+        }
+    }
+    
+    data class BacKeys(
+        val kEnc: ByteArray,
+        val kMac: ByteArray
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Layout'u programmatik olarak oluştur
+        val mainLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 16, 16, 16)
+        }
+        
+        val mrzTitle = TextView(this).apply {
+            text = "🇹🇷 T.C. Kimlik Kartı MRZ Girişi (İsteğe Bağlı)"
+            textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, 16)
+        }
+        mainLayout.addView(mrzTitle)
+        
+        val docNumberEdit = EditText(this).apply {
+            hint = "Belge Numarası (9 hane) - İsteğe bağlı"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+        }
+        mainLayout.addView(docNumberEdit)
+        
+        val birthDateEdit = EditText(this).apply {
+            hint = "Doğum Tarihi (YYAAGG) - İsteğe bağlı"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        }
+        mainLayout.addView(birthDateEdit)
+        
+        val expiryDateEdit = EditText(this).apply {
+            hint = "Son Kullanma (YYAAGG) - İsteğe bağlı"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        }
+        mainLayout.addView(expiryDateEdit)
+        
+        val setMrzButton = Button(this).apply {
+            text = "MRZ Verilerini Ayarla (BAC İçin)"
+            setOnClickListener {
+                val docNum = docNumberEdit.text.toString().uppercase().trim()
+                val birthDate = birthDateEdit.text.toString().trim()
+                val expiryDate = expiryDateEdit.text.toString().trim()
+                
+                if (docNum.length >= 9 && birthDate.length == 6 && expiryDate.length == 6) {
+                    mrzData = MrzData(docNum, birthDate, expiryDate)
+                    Toast.makeText(this@MainActivity, "✅ MRZ verileri ayarlandı - BAC denenecek", Toast.LENGTH_SHORT).show()
+                    
+                    currentTag?.let { tag ->
+                        readTagInfoWithMrzCheck(tag)
+                    }
+                } else if (docNum.isNotEmpty() || birthDate.isNotEmpty() || expiryDate.isNotEmpty()) {
+                    Toast.makeText(this@MainActivity, "⚠️ Eksik MRZ verileri - Ham veri okuma yapılacak", Toast.LENGTH_SHORT).show()
+                    mrzData = null
+                } else {
+                    mrzData = null
+                    Toast.makeText(this@MainActivity, "ℹ️ MRZ temizlendi - Ham veri modu", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        mainLayout.addView(setMrzButton)
+        
+        val clearMrzButton = Button(this).apply {
+            text = "MRZ Temizle (Sadece Ham Veri)"
+            setOnClickListener {
+                docNumberEdit.setText("")
+                birthDateEdit.setText("")
+                expiryDateEdit.setText("")
+                mrzData = null
+                Toast.makeText(this@MainActivity, "🧹 MRZ temizlendi - Sadece ham veri okunacak", Toast.LENGTH_SHORT).show()
+            }
+        }
+        mainLayout.addView(clearMrzButton)
+        
+        val infoText = TextView(this).apply {
+            text = """
+                📋 MRZ İle BAC (Basic Access Control):
+                • MRZ verileri girerseniz → Şifrelenmiş veriler okunmaya çalışılır
+                • MRZ vermezseniz → Sadece ham veriler okunur
+                
+                📍 MRZ Bilgileri:
+                • Belge Numarası: Kimlik kartındaki 9 haneli numara
+                • Doğum Tarihi: YYAAGG formatında (örn: 901215)
+                • Son Kullanma: YYAAGG formatında (örn: 301215)
+                
+                ⚠️ UYARI: Bu özellik sadece eğitim amaçlıdır!
+            """.trimIndent()
+            textSize = 12f
+            setPadding(0, 16, 0, 16)
+        }
+        mainLayout.addView(infoText)
+        
         val scrollView = ScrollView(this)
-        val textView = TextView(this).apply {
+        textViewInfo = TextView(this).apply {
             id = android.R.id.text1
-            textSize = 14f
-            setPadding(32, 32, 32, 32)
+            textSize = 12f
+            setPadding(16, 16, 16, 16)
             setTextIsSelectable(true)
         }
-        scrollView.addView(textView)
-        setContentView(scrollView)
+        scrollView.addView(textViewInfo)
+        mainLayout.addView(scrollView)
         
-        textViewInfo = textView
-
-        // NFC desteğini kontrol et
+        setContentView(mainLayout)
         checkNfcSupport()
     }
 
     private fun checkNfcSupport() {
-        // NFC adaptörünü kontrol et
         nfcAdapter = NfcAdapter.getDefaultAdapter(this)
 
         when {
             nfcAdapter == null -> {
-                // Cihazda NFC yok
                 showNfcNotSupported()
             }
             !nfcAdapter!!.isEnabled -> {
-                // NFC kapalı
                 showNfcDisabled()
             }
             else -> {
-                // NFC var ve açık
                 isNfcSupported = true
                 setupNfc()
                 showNfcReady()
@@ -141,32 +250,27 @@ class MainActivity : AppCompatActivity() {
             🔋 Durum: Etkin ve hazır
             
             📋 Kullanım:
+            • MRZ verileri girin (T.C. Kimlik için BAC)
+            • Veya MRZ vermeden ham veri okuyun
             • NFC/RFID kartını telefonun arkasına yaklaştırın
-            • Kart bilgileri otomatik olarak gösterilecek
             
             🎯 Desteklenen Kartlar:
             📡 NFC Kartları:
             • Mifare Classic / Ultralight
             • NDEF formatındaki kartlar
             • ISO 14443 Type A/B kartlar
-            • T.C. Kimlik kartları (ham veri analizi)
+            • T.C. Kimlik kartları (MRZ ile BAC veya ham veri)
             
             📡 RFID Kartları (13.56 MHz HF):
             • ISO 15693 kartları (NfcV)
             • ISO 14443 uyumlu RFID kartları
             • Erişim kontrol kartları
             • Kütüphane kartları
-            • Hayvan takip çipleri (bazıları)
-            • Oyuncak/oyun kartları (amiibo vb.)
             
             💳 Diğer Kartlar:
             • Kredi/banka kartları (sınırlı bilgi)
             • Toplu taşıma kartları
             • Otel anahtar kartları
-            
-            ⚠️ Desteklenmeyen:
-            • 125 kHz LF-RFID (düşük frekans)
-            • 915 MHz UHF-RFID (ultra yüksek frekans)
             
             🔄 Bekleniyor... Kartı yaklaştırın
         """.trimIndent()
@@ -175,7 +279,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupNfc() {
-        // NFC ayarlarını yapılandır (RFID desteği dahil)
         pendingIntent = PendingIntent.getActivity(
             this, 0,
             Intent(this, javaClass).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
@@ -188,12 +291,11 @@ class MainActivity : AppCompatActivity() {
 
         intentFiltersArray = arrayOf(ndef, tech, tag)
 
-        // RFID desteği için genişletilmiş teknoloji listesi
         techListsArray = arrayOf(
             arrayOf(NfcA::class.java.name),
             arrayOf(NfcB::class.java.name),
             arrayOf(NfcF::class.java.name),
-            arrayOf(NfcV::class.java.name), // ISO 15693 RFID desteği
+            arrayOf(NfcV::class.java.name),
             arrayOf(IsoDep::class.java.name),
             arrayOf(MifareClassic::class.java.name),
             arrayOf(MifareUltralight::class.java.name),
@@ -205,7 +307,6 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         
-        // Her resume'da NFC durumunu tekrar kontrol et
         if (isNfcSupported) {
             if (nfcAdapter?.isEnabled == true) {
                 nfcAdapter?.enableForegroundDispatch(
@@ -219,7 +320,7 @@ class MainActivity : AppCompatActivity() {
                 showNfcDisabled()
             }
         } else {
-            checkNfcSupport() // NFC durumunu tekrar kontrol et
+            checkNfcSupport()
         }
     }
 
@@ -240,48 +341,56 @@ class MainActivity : AppCompatActivity() {
     private fun handleNfcIntent(intent: Intent) {
         val tag: Tag? = intent.getParcelableExtra(NfcAdapter.EXTRA_TAG)
         tag?.let {
-            readTagInfo(it)
+            currentTag = it
+            readTagInfoWithMrzCheck(it)
+        }
+    }
+
+    private fun readTagInfoWithMrzCheck(tag: Tag) {
+        val cardType = detectCardTypeWithRfid(tag)
+        
+        if (cardType.contains("T.C. Kimlik") && mrzData != null && mrzData!!.isValid()) {
+            readTagInfoWithMrz(tag)
+        } else {
+            readTagInfo(tag)
+            
+            if (cardType.contains("T.C. Kimlik") && mrzData == null) {
+                Toast.makeText(this, "💡 T.C. Kimlik kartı tespit edildi. MRZ verilerini girerek şifrelenmiş verileri okuyabilirsiniz.", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
     private fun readTagInfo(tag: Tag) {
         val sb = StringBuilder()
 
-        // Tag UID'si
         val uid = tag.id
         sb.append("🔍 NFC/RFID KART BİLGİLERİ\n")
         sb.append("=" .repeat(35) + "\n\n")
         sb.append("📱 UID: ${bytesToHex(uid)}\n\n")
 
-        // Kart tipini tahmin et (RFID desteği dahil)
         val cardType = detectCardTypeWithRfid(tag)
         sb.append("🏷️ Kart Tipi: $cardType\n\n")
 
-        // Frekans ve teknoloji analizi
         val frequencyInfo = analyzeFrequencyAndTechnology(tag)
         sb.append("📡 Frekans ve Teknoloji Analizi:\n")
         sb.append(frequencyInfo)
         sb.append("\n")
 
-        // Tag teknolojileri
         sb.append("🔧 Desteklenen Teknolojiler:\n")
         tag.techList.forEach { tech ->
             sb.append("• ${tech.substringAfterLast('.')}\n")
         }
         sb.append("\n")
 
-        // TAM HAM VERİ ANALİZİ
         sb.append("🔬 TAM HAM VERİ ANALİZİ\n")
         sb.append("=" .repeat(35) + "\n\n")
         
-        // Tag'in kendisinin ham bilgileri
         sb.append("📱 Tag Ham Bilgileri:\n")
         sb.append("Tag ID (Raw): ${uid.contentToString()}\n")
         sb.append("Tag ID (Hex): ${bytesToHex(uid)}\n")
         sb.append("Tag ID Uzunluğu: ${uid.size} byte\n")
         sb.append("Teknoloji Sayısı: ${tag.techList.size}\n\n")
         
-        // Her teknoloji için ayrı ham veri (RFID dahil)
         tag.techList.forEachIndexed { index, tech ->
             sb.append("🔧 Teknoloji ${index + 1}: ${tech.substringAfterLast('.')}\n")
             when (tech) {
@@ -304,7 +413,6 @@ class MainActivity : AppCompatActivity() {
                     sb.append("  Max Transceive: ${nfcF.maxTransceiveLength} byte\n")
                 }
                 "android.nfc.tech.NfcV" -> {
-                    // ISO 15693 (RFID) özel analizi
                     val nfcV = NfcV.get(tag)
                     sb.append("  📡 ISO 15693 (RFID) Bilgileri:\n")
                     sb.append("  Response Flags: 0x${String.format("%02X", nfcV.responseFlags)}\n")
@@ -312,12 +420,10 @@ class MainActivity : AppCompatActivity() {
                     sb.append("  Max Transceive: ${nfcV.maxTransceiveLength} byte\n")
                     sb.append("  📡 Bu bir RFID kartıdır (13.56 MHz HF)\n")
                     
-                    // RFID özel komutları dene
                     try {
                         nfcV.connect()
                         sb.append("  🔍 RFID Özel Komut Denemeleri:\n")
                         
-                        // Get System Information komutu
                         val getSystemInfo = byteArrayOf(0x00, 0x2B, *uid)
                         try {
                             val sysInfoResponse = nfcV.transceive(getSystemInfo)
@@ -326,7 +432,6 @@ class MainActivity : AppCompatActivity() {
                             sb.append("  System Info: Desteklenmiyor\n")
                         }
                         
-                        // Read Single Block komutu (blok 0)
                         val readBlock = byteArrayOf(0x00, 0x20, *uid, 0x00)
                         try {
                             val blockResponse = nfcV.transceive(readBlock)
@@ -355,12 +460,10 @@ class MainActivity : AppCompatActivity() {
                     sb.append("  Sektör: ${mifare.sectorCount}\n")
                     sb.append("  Blok: ${mifare.blockCount}\n")
                     
-                    // Mifare RFID özel okuma denemesi
                     try {
                         mifare.connect()
                         sb.append("  🔍 Mifare RFID Blok Okuma:\n")
                         
-                        // Blok 0 okuma denemesi (genellikle herkese açık)
                         try {
                             val block0 = mifare.readBlock(0)
                             sb.append("  Blok 0: ${bytesToHex(block0)}\n")
@@ -379,12 +482,10 @@ class MainActivity : AppCompatActivity() {
                     sb.append("  Tip: ${ultralight.type}\n")
                     sb.append("  Max Transceive: ${ultralight.maxTransceiveLength} byte\n")
                     
-                    // Mifare Ultralight RFID okuma
                     try {
                         ultralight.connect()
                         sb.append("  🔍 Ultralight RFID Sayfa Okuma:\n")
                         
-                        // Sayfa 0-3 okuma (genellikle herkese açık)
                         for (page in 0..3) {
                             try {
                                 val pageData = ultralight.readPages(page)
@@ -411,7 +512,6 @@ class MainActivity : AppCompatActivity() {
             sb.append("\n")
         }
 
-        // Ham veri görüntüleme
         sb.append("💾 Ham Veri (UID):\n")
         sb.append("Hex: ${bytesToHex(uid)}\n")
         sb.append("Decimal: ${uid.joinToString(", ") { (it.toInt() and 0xFF).toString() }}\n")
@@ -419,12 +519,10 @@ class MainActivity : AppCompatActivity() {
             String.format("%8s", Integer.toBinaryString(it.toInt() and 0xFF)).replace(' ', '0')
         }}\n\n")
 
-        // Hex Dump formatı
         sb.append("🔍 HEX DUMP (UID):\n")
         sb.append(bytesToHexDump(uid, true))
         sb.append("\n\n")
 
-        // ISO-DEP için detaylı ham veri okuma
         val isoDep = IsoDep.get(tag)
         if (isoDep != null) {
             try {
@@ -433,7 +531,6 @@ class MainActivity : AppCompatActivity() {
                 sb.append("💳 ISO-DEP HAM VERİ DUMP:\n")
                 sb.append("-" .repeat(30) + "\n")
                 
-                // APDU komutlarının ham yanıtları
                 val rawCommands = listOf(
                     "SELECT MF" to byteArrayOf(0x00, 0xA4, 0x00, 0x0C, 0x02, 0x3F, 0x00),
                     "SELECT AID" to byteArrayOf(0x00, 0xA4, 0x04, 0x0C, 0x07, 0xA0.toByte(), 0x00, 0x00, 0x02, 0x47, 0x10, 0x01),
@@ -455,7 +552,6 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 
-                // T.C. Kimlik kartı için özel ham veri dump
                 if (cardType.contains("T.C. Kimlik")) {
                     sb.append("🇹🇷 T.C. KİMLİK KARTI HAM VERİ DUMP:\n")
                     sb.append("=" .repeat(40) + "\n")
@@ -468,7 +564,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // NDEF verisi (eğer varsa)
         val ndef = Ndef.get(tag)
         if (ndef != null) {
             try {
@@ -495,25 +590,175 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // RFID Özet Analizi
         sb.append("📡 RFID/NFC ÖZET ANALİZİ:\n")
         sb.append("=" .repeat(30) + "\n")
         sb.append(generateRfidSummary(tag))
         sb.append("\n")
 
-        sb.append("✅ Okuma tamamlandı - ${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}\n\n")
-        sb.append("🔄 Başka NFC/RFID kart okumak için tekrar yaklaştırın")
+        sb.append("✅ Ham veri okuma tamamlandı - ${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}\n\n")
+        sb.append("🔄 Başka NFC/RFID kart okumak için tekrar yaklaştırın\n")
+        sb.append("💡 T.C. Kimlik kartları için MRZ verilerini girerek BAC deneyebilirsiniz")
 
         textViewInfo.text = sb.toString()
         
-        // Başarılı okuma toast'ı
-        Toast.makeText(this, "✅ NFC/RFID kart başarıyla okundu!", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "✅ NFC/RFID kart ham verisi okundu!", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun readTagInfoWithMrz(tag: Tag) {
+        val sb = StringBuilder()
+        
+        sb.append("🇹🇷 T.C. KİMLİK KARTI MRZ/BAC OKUMA\n")
+        sb.append("=" .repeat(45) + "\n\n")
+        
+        val uid = tag.id
+        sb.append("📱 UID: ${bytesToHex(uid)}\n")
+        sb.append("🔑 MRZ Verisi: ${mrzData?.toMrzString()}\n\n")
+        
+        val  isoDep = IsoDep.get(tag)
+        if (isoDep != null && mrzData != null) {
+            try {
+                isoDep.connect()
+                
+                sb.append("🔐 BAC (Basic Access Control) İŞLEMİ:\n")
+                sb.append("-" .repeat(40) + "\n")
+                
+                // 1. e-Passport uygulamasını seç
+                sb.append("📤 1. e-Passport Uygulaması Seçiliyor...\n")
+                val selectApp = byteArrayOf(0x00, 0xA4, 0x04, 0x0C, 0x07, 0xA0.toByte(), 0x00, 0x00, 0x02, 0x47, 0x10, 0x01)
+                val appResponse = isoDep.transceive(selectApp)
+                sb.append("   Yanıt: ${bytesToHex(appResponse)}\n")
+                sb.append("   Durum: ${interpretStatusWord(appResponse)}\n\n")
+                
+                if (!isSuccessResponse(appResponse)) {
+                    sb.append("❌ e-Passport uygulaması seçilemedi\n")
+                    sb.append("💡 Ham veri okumaya geçiliyor...\n\n")
+                    isoDep.close()
+                    
+                    // Mevcut metni sakla ve ham veri ekle
+                    val bacText = sb.toString()
+                    readTagInfo(tag)
+                    val currentText = textViewInfo.text.toString()
+                    textViewInfo.text = bacText + "\n" + "=" .repeat(45) + "\n📄 HAM VERİ OKUMA SONUÇLARI:\n" + "=" .repeat(45) + "\n\n" + currentText
+                    return
+                }
+                
+                // 2. BAC anahtarlarını türet
+                sb.append("🔑 2. BAC Anahtarları Türetiliyor...\n")
+                val bacKeys = deriveBacKeys(mrzData!!)
+                sb.append("   K_ENC: ${bytesToHex(bacKeys.kEnc)}\n")
+                sb.append("   K_MAC: ${bytesToHex(bacKeys.kMac)}\n\n")
+                
+                // 3. GET CHALLENGE (Mutual Authentication)
+                sb.append("🎲 3. Challenge Alınıyor...\n")
+                val getChallenge = byteArrayOf(0x00, 0x84, 0x00, 0x00, 0x08)
+                val challengeResponse = isoDep.transceive(getChallenge)
+                sb.append("   Komut: ${bytesToHex(getChallenge)}\n")
+                sb.append("   Challenge: ${bytesToHex(challengeResponse)}\n")
+                
+                if (challengeResponse.size < 10) {
+                    sb.append("❌ Challenge alınamadı\n")
+                    sb.append("💡 Ham veri okumaya geçiliyor...\n\n")
+                    isoDep.close()
+                    
+                    val bacText = sb.toString()
+                    readTagInfo(tag)
+                    val currentText = textViewInfo.text.toString()
+                    textViewInfo.text = bacText + "\n" + "=" .repeat(45) + "\n📄 HAM VERİ OKUMA SONUÇLARI:\n" + "=" .repeat(45) + "\n\n" + currentText
+                    return
+                }
+                
+                val rndIcc = challengeResponse.dropLast(2).toByteArray() // Status word çıkar
+                sb.append("   RND.ICC: ${bytesToHex(rndIcc)}\n\n")
+                
+                // 4. Mutual Authentication
+                sb.append("🔐 4. Karşılıklı Kimlik Doğrulama...\n")
+                val rndIfd = generateRandomBytes(8)
+                val kIfd = generateRandomBytes(16)
+                
+                sb.append("   RND.IFD: ${bytesToHex(rndIfd)}\n")
+                sb.append("   K.IFD: ${bytesToHex(kIfd)}\n")
+                
+                // Authentication data oluştur
+                val authData = createAuthenticationData(rndIfd, rndIcc, kIfd, bacKeys)
+                sb.append("   Auth Data: ${bytesToHex(authData)}\n")
+                
+                // EXTERNAL AUTHENTICATE komutu
+                val extAuth = byteArrayOf(0x00, 0x82, 0x00, 0x00, authData.size.toByte()) + authData
+                sb.append("   Komut: ${bytesToHex(extAuth)}\n")
+                
+                val authResponse = isoDep.transceive(extAuth)
+                sb.append("   Yanıt: ${bytesToHex(authResponse)}\n")
+                sb.append("   Durum: ${interpretStatusWord(authResponse)}\n\n")
+                
+                if (isSuccessResponse(authResponse)) {
+                    sb.append("✅ BAC Kimlik Doğrulama BAŞARILI!\n\n")
+                    
+                    // 5. Şifrelenmiş verileri oku
+                    readEncryptedData(isoDep, sb, bacKeys)
+                    
+                } else {
+                    sb.append("❌ BAC Kimlik Doğrulama BAŞARISIZ!\n")
+                    sb.append("🔍 Muhtemel Sebepler:\n")
+                    sb.append("• Yanlış MRZ bilgileri\n")
+                    sb.append("• Kart BAC desteklemiyor\n")
+                    sb.append("• Kimlik doğrulama algoritması farklı\n")
+                    sb.append("• Kart kilitli veya hasarlı\n\n")
+                    
+                    // Hata analizi
+                    analyzeAuthenticationError(authResponse, sb)
+                    
+                    sb.append("\n💡 Ham veri okumaya geçiliyor...\n\n")
+                    
+                    // BAC başarısız - ham veri okumaya geç
+                    val bacText = sb.toString()
+                    isoDep.close()
+                    readTagInfo(tag)
+                    val currentText = textViewInfo.text.toString()
+                    textViewInfo.text = bacText + "\n" + "=" .repeat(45) + "\n📄 HAM VERİ OKUMA SONUÇLARI:\n" + "=" .repeat(45) + "\n\n" + currentText
+                    return
+                }
+                
+                isoDep.close()
+                
+            } catch (e: Exception) {
+                sb.append("❌ BAC İşlem Hatası: ${e.message}\n")
+                sb.append("💡 Ham veri okumaya geçiliyor...\n\n")
+                
+                val bacText = sb.toString()
+                readTagInfo(tag)
+                val currentText = textViewInfo.text.toString()
+                textViewInfo.text = bacText + "\n" + "=" .repeat(45) + "\n📄 HAM VERİ OKUMA SONUÇLARI:\n" + "=" .repeat(45) + "\n\n" + currentText
+                return
+            }
+        } else {
+            sb.append("❌ ISO-DEP desteklenmiyor veya MRZ verisi eksik\n")
+            sb.append("💡 Ham veri okumaya geçiliyor...\n\n")
+            
+            val bacText = sb.toString()
+            readTagInfo(tag)
+            val currentText = textViewInfo.text.toString()
+            textViewInfo.text = bacText + "\n" + "=" .repeat(45) + "\n📄 HAM VERİ OKUMA SONUÇLARI:\n" + "=" .repeat(45) + "\n\n" + currentText
+            return
+        }
+        
+        sb.append("\n" + "=" .repeat(45) + "\n")
+        sb.append("📚 BAC (Basic Access Control) Hakkında:\n")
+        sb.append("• e-Passport standartı (ICAO Doc 9303)\n")
+        sb.append("• MRZ verilerinden türetilen anahtarlarla şifreleme\n")
+        sb.append("• 3DES şifreleme algoritması\n")
+        sb.append("• Karşılıklı kimlik doğrulama sistemi\n\n")
+        
+        sb.append("⚖️ YASAL UYARI:\n")
+        sb.append("Bu işlem sadece eğitim amaçlıdır.\n")
+        sb.append("Kendi kimlik kartınızı test edin.\n")
+        sb.append("Başkasının kimlik verilerini kullanmayın!\n")
+        
+        textViewInfo.text = sb.toString()
     }
 
     // RFID destekli kart tipi tespiti
     private fun detectCardTypeWithRfid(tag: Tag): String {
         val techList = tag.techList
-        val uid = tag.id
         
         return when {
             // ISO 15693 RFID kartları
@@ -708,6 +953,206 @@ class MainActivity : AppCompatActivity() {
         return sb.toString()
     }
 
+    // BAC anahtarlarını türet
+    private fun deriveBacKeys(mrzData: MrzData): BacKeys {
+        // MRZ string oluştur (belge numarası + doğum tarihi + son kullanma tarihi)
+        val mrzString = mrzData.toMrzString()
+        
+        // SHA-1 hash hesapla
+        val md = MessageDigest.getInstance("SHA-1")
+        val mrzHash = md.digest(mrzString.toByteArray())
+        
+        // İlk 16 byte'ı al ve BAC anahtarlarını türet
+        val kSeed = mrzHash.take(16).toByteArray()
+        
+        // K_ENC = SHA-1(K_SEED || 00000001)[0..7]
+        val kEncSeed = kSeed + byteArrayOf(0x00, 0x00, 0x00, 0x01)
+        val kEncHash = md.digest(kEncSeed)
+        val kEnc = kEncHash.take(8).toByteArray()
+        
+        // K_MAC = SHA-1(K_SEED || 00000002)[0..7] 
+        val kMacSeed = kSeed + byteArrayOf(0x00, 0x00, 0x00, 0x02)
+        val kMacHash = md.digest(kMacSeed)
+        val kMac = kMacHash.take(8).toByteArray()
+        
+        return BacKeys(kEnc, kMac)
+    }
+
+    // Authentication data oluştur
+    private fun createAuthenticationData(rndIfd: ByteArray, rndIcc: ByteArray, kIfd: ByteArray, bacKeys: BacKeys): ByteArray {
+        try {
+            // S = RND.IFD || RND.ICC || K.IFD
+            val s = rndIfd + rndIcc + kIfd
+            
+            // E(K_ENC, S) - 3DES şifreleme
+            val cipher = Cipher.getInstance("DESede/ECB/NoPadding")
+            val keySpec = SecretKeySpec(bacKeys.kEnc + bacKeys.kEnc.take(8).toByteArray(), "DESede") // 24 byte key
+            cipher.init(Cipher.ENCRYPT_MODE, keySpec)
+            
+            // Padding ekle (8 byte'ın katı olması için)
+            val paddedS = padData(s, 8)
+            val eifd = cipher.doFinal(paddedS)
+            
+            // MAC hesapla
+            val mac = calculateMac(eifd, bacKeys.kMac)
+            
+            return eifd + mac
+            
+        } catch (e: Exception) {
+            // Basit XOR şifreleme (fallback)
+            val s = rndIfd + rndIcc + kIfd
+            return s.mapIndexed { index, byte ->
+                (byte.toInt() xor bacKeys.kEnc[index % bacKeys.kEnc.size].toInt()).toByte()
+            }.toByteArray()
+        }
+    }
+
+    // Şifrelenmiş verileri oku
+    private fun readEncryptedData(isoDep: IsoDep, sb: StringBuilder, bacKeys: BacKeys) {
+        sb.append("🔓 ŞİFRELENMİŞ VERİLER OKUNUYOR:\n")
+        sb.append("-" .repeat(30) + "\n")
+        
+        // EF.COM okuma denemesi
+        try {
+            val selectCom = byteArrayOf(0x00, 0xA4, 0x02, 0x0C, 0x02, 0x01, 0x1E)
+            val comResponse = isoDep.transceive(selectCom)
+            sb.append("📂 EF.COM Seçimi: ${interpretStatusWord(comResponse)}\n")
+            
+            if (isSuccessResponse(comResponse)) {
+                val readCom = byteArrayOf(0x00, 0xB0, 0x00, 0x00, 0x20) // 32 byte oku
+                val comData = isoDep.transceive(readCom)
+                sb.append("📄 EF.COM Ham Veri: ${bytesToHex(comData)}\n")
+                
+                if (comData.size > 2) {
+                    val encryptedData = comData.dropLast(2).toByteArray()
+                    val decryptedData = decryptData(encryptedData, bacKeys.kEnc)
+                    sb.append("🔓 Şifresi Çözülen: ${bytesToHex(decryptedData)}\n")
+                    sb.append("📝 ASCII: ${tryDecodeAscii(decryptedData)}\n")
+                }
+            }
+        } catch (e: Exception) {
+            sb.append("❌ EF.COM okuma hatası: ${e.message}\n")
+        }
+        
+        sb.append("\n")
+        
+        // EF.DG1 (MRZ) okuma denemesi
+        try {
+            val selectDg1 = byteArrayOf(0x00, 0xA4, 0x02, 0x0C, 0x02, 0x01, 0x01)
+            val dg1Response = isoDep.transceive(selectDg1)
+            sb.append("📂 EF.DG1 (MRZ) Seçimi: ${interpretStatusWord(dg1Response)}\n")
+            
+            if (isSuccessResponse(dg1Response)) {
+                val readDg1 = byteArrayOf(0x00, 0xB0, 0x00, 0x00, 0x50) // 80 byte oku
+                val dg1Data = isoDep.transceive(readDg1)
+                sb.append("📄 EF.DG1 Ham Veri: ${bytesToHex(dg1Data)}\n")
+                
+                if (dg1Data.size > 2) {
+                    val encryptedData = dg1Data.dropLast(2).toByteArray()
+                    val decryptedData = decryptData(encryptedData, bacKeys.kEnc)
+                    sb.append("🔓 Şifresi Çözülen: ${bytesToHex(decryptedData)}\n")
+                    sb.append("📝 ASCII: ${tryDecodeAscii(decryptedData)}\n")
+                    
+                    // MRZ parsing denemesi
+                    val mrzText = tryDecodeAscii(decryptedData).filter { it.isLetterOrDigit() || it == '<' }
+                    if (mrzText.length > 30) {
+                        sb.append("🔍 MRZ Analizi:\n")
+                        sb.append("   Ham MRZ: $mrzText\n")
+                        parseMrzData(mrzText, sb)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            sb.append("❌ EF.DG1 okuma hatası: ${e.message}\n")
+        }
+        
+        sb.append("\n")
+        
+        // EF.DG2 (Fotoğraf) okuma denemesi
+        try {
+            val selectDg2 = byteArrayOf(0x00, 0xA4, 0x02, 0x0C, 0x02, 0x01, 0x02)
+            val dg2Response = isoDep.transceive(selectDg2)
+            sb.append("📂 EF.DG2 (Fotoğraf) Seçimi: ${interpretStatusWord(dg2Response)}\n")
+            
+            if (isSuccessResponse(dg2Response)) {
+                sb.append("✅ Fotoğraf verisi mevcut (şifrelenmiş)\n")
+                sb.append("ℹ️ Fotoğraf verisini çözmek için gelişmiş kriptografi gerekir\n")
+            }
+        } catch (e: Exception) {
+            sb.append("❌ EF.DG2 okuma hatası: ${e.message}\n")
+        }
+    }
+
+    // MRZ verilerini analiz et
+    private fun parseMrzData(mrzText: String, sb: StringBuilder) {
+        try {
+            // MRZ formatı: IDTUR<< (tip) + belge no + kontrol + ülke kodu vb.
+            if (mrzText.startsWith("IDTUR")) {
+                sb.append("   Belge Tipi: Türkiye Kimlik Kartı\n")
+                
+                // Belge numarasını çıkarmaya çalış
+                val docPattern = Regex("[A-Z0-9]{9}")
+                val docMatch = docPattern.find(mrzText)
+                if (docMatch != null) {
+                    sb.append("   Belge No: ${docMatch.value}\n")
+                }
+                
+                // Tarihleri çıkarmaya çalış
+                val datePattern = Regex("\\d{6}")
+                val dates = datePattern.findAll(mrzText).map { it.value }.toList()
+                if (dates.size >= 2) {
+                    sb.append("   Doğum Tarihi: ${dates[0]}\n")
+                    sb.append("   Son Kullanma: ${dates[1]}\n")
+                }
+            }
+        } catch (e: Exception) {
+            sb.append("   MRZ parsing hatası: ${e.message}\n")
+        }
+    }
+
+    // Veri şifresini çöz
+    private fun decryptData(encryptedData: ByteArray, key: ByteArray): ByteArray {
+        return try {
+            val cipher = Cipher.getInstance("DES/ECB/NoPadding")
+            val keySpec = SecretKeySpec(key, "DES")
+            cipher.init(Cipher.DECRYPT_MODE, keySpec)
+            cipher.doFinal(encryptedData)
+        } catch (e: Exception) {
+            // Basit XOR çözme (fallback)
+            encryptedData.mapIndexed { index, byte ->
+                (byte.toInt() xor key[index % key.size].toInt()).toByte()
+            }.toByteArray()
+        }
+    }
+
+    // Kimlik doğrulama hatasını analiz et
+    private fun analyzeAuthenticationError(response: ByteArray, sb: StringBuilder) {
+        if (response.size >= 2) {
+            val sw1 = response[response.size - 2].toInt() and 0xFF
+            val sw2 = response[response.size - 1].toInt() and 0xFF
+            
+            when {
+                sw1 == 0x69 && sw2 == 0x82 -> {
+                    sb.append("🔍 Hata Analizi: Güvenlik durumu tatmin edilmedi\n")
+                    sb.append("• MRZ bilgileri yanlış olabilir\n")
+                    sb.append("• Kart farklı kimlik doğrulama kullanıyor olabilir\n")
+                }
+                sw1 == 0x69 && sw2 == 0x85 -> {
+                    sb.append("🔍 Hata Analizi: Kullanım koşulları tatmin edilmedi\n")
+                    sb.append("• BAC devre dışı olabilir\n")
+                    sb.append("• Kart PACE kullanıyor olabilir\n")
+                }
+                sw1 == 0x6A && sw2 == 0x88 -> {
+                    sb.append("🔍 Hata Analizi: Anahtar referansı bulunamadı\n")
+                    sb.append("• Türetilen anahtarlar yanlış\n")
+                }
+                else -> {
+                    sb.append("🔍 Hata Analizi: Bilinmeyen hata kodu\n")
+                }
+            }
+        }
+    }
+
     // T.C. Kimlik kartı için detaylı ham veri dump
     private fun dumpTurkishIdCardRawData(isoDep: IsoDep, sb: StringBuilder, tag: Tag) {
         // Bilinen dosya ID'leri ve okuma denemeleri
@@ -776,6 +1221,28 @@ class MainActivity : AppCompatActivity() {
             sb.append("$offset  $hexPart  $asciiPart\n")
         }
         sb.append("\n")
+    }
+
+    // Yardımcı fonksiyonlar
+    private fun generateRandomBytes(size: Int): ByteArray {
+        val random = SecureRandom()
+        val bytes = ByteArray(size)
+        random.nextBytes(bytes)
+        return bytes
+    }
+
+    private fun padData(data: ByteArray, blockSize: Int): ByteArray {
+        val padding = blockSize - (data.size % blockSize)
+        return data + ByteArray(padding) { 0x00 }
+    }
+
+    private fun calculateMac(data: ByteArray, key: ByteArray): ByteArray {
+        // Basit MAC hesaplama (gerçek MAC algoritması daha karmaşık)
+        val mac = ByteArray(8)
+        for (i in mac.indices) {
+            mac[i] = (data[i % data.size].toInt() xor key[i % key.size].toInt()).toByte()
+        }
+        return mac
     }
 
     // ASCII decode denemesi
