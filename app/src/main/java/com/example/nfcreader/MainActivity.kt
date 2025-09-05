@@ -75,10 +75,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun showNfcNotSupported() {
         val message = """
-            ❌ NFC DESTEKLENMİYOR
-            ═══════════════════════
+            ❌ NFC/RFID DESTEKLENMİYOR
+            ═══════════════════════════
             
-            Bu cihazda NFC özelliği bulunmuyor.
+            Bu cihazda NFC/RFID özelliği bulunmuyor.
             
             📱 Desteklenen Cihazlar:
             • Android 5.0+ (API 21+)
@@ -89,9 +89,14 @@ class MainActivity : AppCompatActivity() {
             Ayarlar → Bağlantılar → NFC
             (Eğer bu seçenek yoksa cihazınız desteklemiyor)
             
+            📡 RFID Frekans Desteği:
+            • 13.56 MHz (HF-RFID): NFC ile desteklenir
+            • 125 kHz (LF-RFID): Desteklenmez (özel donanım gerekir)
+            • 915 MHz (UHF-RFID): Desteklenmez (özel donanım gerekir)
+            
             📞 Alternatif Çözümler:
             • NFC özellikli başka cihaz kullanın
-            • Harici NFC okuyucu satın alın
+            • Harici NFC/RFID okuyucu satın alın
             • QR kod okuyucu alternatifi kullanın
             
             ℹ️ Bu uygulama NFC olmadan çalışamaz ama 
@@ -103,8 +108,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun showNfcDisabled() {
         val message = """
-            📱 NFC KAPALI
-            ═══════════════
+            📱 NFC/RFID KAPALI
+            ═══════════════════
             
             Cihazınızda NFC var ama kapalı.
             
@@ -117,6 +122,9 @@ class MainActivity : AppCompatActivity() {
             • Bildirim panelini açın
             • NFC kısayoluna dokunun
             
+            📡 RFID Desteği:
+            NFC açıldığında 13.56 MHz RFID kartları da okunabilir
+            
             🔄 NFC'yi açtıktan sonra uygulamayı 
             yeniden başlatmanız gerekebilir.
         """.trimIndent()
@@ -126,23 +134,39 @@ class MainActivity : AppCompatActivity() {
 
     private fun showNfcReady() {
         val message = """
-            ✅ NFC HAZIR
-            ═══════════════
+            ✅ NFC/RFID HAZIR
+            ═══════════════════
             
             📱 Cihaz: NFC destekli
             🔋 Durum: Etkin ve hazır
             
             📋 Kullanım:
-            • NFC kartını telefonun arkasına yaklaştırın
+            • NFC/RFID kartını telefonun arkasına yaklaştırın
             • Kart bilgileri otomatik olarak gösterilecek
             
             🎯 Desteklenen Kartlar:
+            📡 NFC Kartları:
             • Mifare Classic / Ultralight
             • NDEF formatındaki kartlar
             • ISO 14443 Type A/B kartlar
-            • Kredi kartları (sınırlı bilgi)
-            • Toplu taşıma kartları
             • T.C. Kimlik kartları (ham veri analizi)
+            
+            📡 RFID Kartları (13.56 MHz HF):
+            • ISO 15693 kartları (NfcV)
+            • ISO 14443 uyumlu RFID kartları
+            • Erişim kontrol kartları
+            • Kütüphane kartları
+            • Hayvan takip çipleri (bazıları)
+            • Oyuncak/oyun kartları (amiibo vb.)
+            
+            💳 Diğer Kartlar:
+            • Kredi/banka kartları (sınırlı bilgi)
+            • Toplu taşıma kartları
+            • Otel anahtar kartları
+            
+            ⚠️ Desteklenmeyen:
+            • 125 kHz LF-RFID (düşük frekans)
+            • 915 MHz UHF-RFID (ultra yüksek frekans)
             
             🔄 Bekleniyor... Kartı yaklaştırın
         """.trimIndent()
@@ -151,7 +175,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupNfc() {
-        // NFC ayarlarını yapılandır
+        // NFC ayarlarını yapılandır (RFID desteği dahil)
         pendingIntent = PendingIntent.getActivity(
             this, 0,
             Intent(this, javaClass).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
@@ -164,11 +188,12 @@ class MainActivity : AppCompatActivity() {
 
         intentFiltersArray = arrayOf(ndef, tech, tag)
 
+        // RFID desteği için genişletilmiş teknoloji listesi
         techListsArray = arrayOf(
             arrayOf(NfcA::class.java.name),
             arrayOf(NfcB::class.java.name),
             arrayOf(NfcF::class.java.name),
-            arrayOf(NfcV::class.java.name),
+            arrayOf(NfcV::class.java.name), // ISO 15693 RFID desteği
             arrayOf(IsoDep::class.java.name),
             arrayOf(MifareClassic::class.java.name),
             arrayOf(MifareUltralight::class.java.name),
@@ -224,13 +249,19 @@ class MainActivity : AppCompatActivity() {
 
         // Tag UID'si
         val uid = tag.id
-        sb.append("🔍 NFC KART BİLGİLERİ\n")
-        sb.append("=" .repeat(30) + "\n\n")
+        sb.append("🔍 NFC/RFID KART BİLGİLERİ\n")
+        sb.append("=" .repeat(35) + "\n\n")
         sb.append("📱 UID: ${bytesToHex(uid)}\n\n")
 
-        // Kart tipini tahmin et
-        val cardType = detectCardType(tag)
+        // Kart tipini tahmin et (RFID desteği dahil)
+        val cardType = detectCardTypeWithRfid(tag)
         sb.append("🏷️ Kart Tipi: $cardType\n\n")
+
+        // Frekans ve teknoloji analizi
+        val frequencyInfo = analyzeFrequencyAndTechnology(tag)
+        sb.append("📡 Frekans ve Teknoloji Analizi:\n")
+        sb.append(frequencyInfo)
+        sb.append("\n")
 
         // Tag teknolojileri
         sb.append("🔧 Desteklenen Teknolojiler:\n")
@@ -250,7 +281,7 @@ class MainActivity : AppCompatActivity() {
         sb.append("Tag ID Uzunluğu: ${uid.size} byte\n")
         sb.append("Teknoloji Sayısı: ${tag.techList.size}\n\n")
         
-        // Her teknoloji için ayrı ham veri
+        // Her teknoloji için ayrı ham veri (RFID dahil)
         tag.techList.forEachIndexed { index, tech ->
             sb.append("🔧 Teknoloji ${index + 1}: ${tech.substringAfterLast('.')}\n")
             when (tech) {
@@ -266,6 +297,50 @@ class MainActivity : AppCompatActivity() {
                     sb.append("  Protocol Info (Ham): ${bytesToHex(nfcB.protocolInfo)}\n")
                     sb.append("  Max Transceive: ${nfcB.maxTransceiveLength} byte\n")
                 }
+                "android.nfc.tech.NfcF" -> {
+                    val nfcF = NfcF.get(tag)
+                    sb.append("  Manufacturer (Ham): ${bytesToHex(nfcF.manufacturer)}\n")
+                    sb.append("  System Code (Ham): ${bytesToHex(nfcF.systemCode)}\n")
+                    sb.append("  Max Transceive: ${nfcF.maxTransceiveLength} byte\n")
+                }
+                "android.nfc.tech.NfcV" -> {
+                    // ISO 15693 (RFID) özel analizi
+                    val nfcV = NfcV.get(tag)
+                    sb.append("  📡 ISO 15693 (RFID) Bilgileri:\n")
+                    sb.append("  Response Flags: 0x${String.format("%02X", nfcV.responseFlags)}\n")
+                    sb.append("  DSF ID: 0x${String.format("%02X", nfcV.dsfId)}\n")
+                    sb.append("  Max Transceive: ${nfcV.maxTransceiveLength} byte\n")
+                    sb.append("  📡 Bu bir RFID kartıdır (13.56 MHz HF)\n")
+                    
+                    // RFID özel komutları dene
+                    try {
+                        nfcV.connect()
+                        sb.append("  🔍 RFID Özel Komut Denemeleri:\n")
+                        
+                        // Get System Information komutu
+                        val getSystemInfo = byteArrayOf(0x00, 0x2B, *uid)
+                        try {
+                            val sysInfoResponse = nfcV.transceive(getSystemInfo)
+                            sb.append("  System Info: ${bytesToHex(sysInfoResponse)}\n")
+                        } catch (e: Exception) {
+                            sb.append("  System Info: Desteklenmiyor\n")
+                        }
+                        
+                        // Read Single Block komutu (blok 0)
+                        val readBlock = byteArrayOf(0x00, 0x20, *uid, 0x00)
+                        try {
+                            val blockResponse = nfcV.transceive(readBlock)
+                            sb.append("  Blok 0 Verisi: ${bytesToHex(blockResponse)}\n")
+                            sb.append("  Blok 0 ASCII: ${tryDecodeAscii(blockResponse)}\n")
+                        } catch (e: Exception) {
+                            sb.append("  Blok 0: Okunamadı (${e.message})\n")
+                        }
+                        
+                        nfcV.close()
+                    } catch (e: Exception) {
+                        sb.append("  RFID bağlantı hatası: ${e.message}\n")
+                    }
+                }
                 "android.nfc.tech.IsoDep" -> {
                     val isoDep = IsoDep.get(tag)
                     sb.append("  Historical Bytes (Ham): ${bytesToHex(isoDep.historicalBytes ?: byteArrayOf())}\n")
@@ -279,11 +354,51 @@ class MainActivity : AppCompatActivity() {
                     sb.append("  Tip: ${mifare.type}\n")
                     sb.append("  Sektör: ${mifare.sectorCount}\n")
                     sb.append("  Blok: ${mifare.blockCount}\n")
+                    
+                    // Mifare RFID özel okuma denemesi
+                    try {
+                        mifare.connect()
+                        sb.append("  🔍 Mifare RFID Blok Okuma:\n")
+                        
+                        // Blok 0 okuma denemesi (genellikle herkese açık)
+                        try {
+                            val block0 = mifare.readBlock(0)
+                            sb.append("  Blok 0: ${bytesToHex(block0)}\n")
+                            sb.append("  Blok 0 ASCII: ${tryDecodeAscii(block0)}\n")
+                        } catch (e: Exception) {
+                            sb.append("  Blok 0: Kimlik doğrulama gerekli\n")
+                        }
+                        
+                        mifare.close()
+                    } catch (e: Exception) {
+                        sb.append("  Mifare bağlantı hatası: ${e.message}\n")
+                    }
                 }
                 "android.nfc.tech.MifareUltralight" -> {
                     val ultralight = MifareUltralight.get(tag)
                     sb.append("  Tip: ${ultralight.type}\n")
                     sb.append("  Max Transceive: ${ultralight.maxTransceiveLength} byte\n")
+                    
+                    // Mifare Ultralight RFID okuma
+                    try {
+                        ultralight.connect()
+                        sb.append("  🔍 Ultralight RFID Sayfa Okuma:\n")
+                        
+                        // Sayfa 0-3 okuma (genellikle herkese açık)
+                        for (page in 0..3) {
+                            try {
+                                val pageData = ultralight.readPages(page)
+                                sb.append("  Sayfa $page: ${bytesToHex(pageData)}\n")
+                            } catch (e: Exception) {
+                                sb.append("  Sayfa $page: Okunamadı\n")
+                                break
+                            }
+                        }
+                        
+                        ultralight.close()
+                    } catch (e: Exception) {
+                        sb.append("  Ultralight bağlantı hatası: ${e.message}\n")
+                    }
                 }
                 "android.nfc.tech.Ndef" -> {
                     val ndef = Ndef.get(tag)
@@ -380,30 +495,217 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Mifare Classic bilgileri (eğer varsa)
-        val mifareClassic = MifareClassic.get(tag)
-        if (mifareClassic != null) {
-            sb.append("🏷️ Mifare Classic Bilgileri:\n")
-            sb.append("Boyut: ${mifareClassic.size} byte\n")
-            sb.append("Sektör sayısı: ${mifareClassic.sectorCount}\n")
-            sb.append("Blok sayısı: ${mifareClassic.blockCount}\n")
-            sb.append("Tip: ${getMifareClassicType(mifareClassic.type)}\n\n")
-        }
-
-        // Mifare Ultralight bilgileri (eğer varsa)
-        val mifareUltralight = MifareUltralight.get(tag)
-        if (mifareUltralight != null) {
-            sb.append("🔷 Mifare Ultralight Bilgileri:\n")
-            sb.append("Tip: ${getMifareUltralightType(mifareUltralight.type)}\n\n")
-        }
+        // RFID Özet Analizi
+        sb.append("📡 RFID/NFC ÖZET ANALİZİ:\n")
+        sb.append("=" .repeat(30) + "\n")
+        sb.append(generateRfidSummary(tag))
+        sb.append("\n")
 
         sb.append("✅ Okuma tamamlandı - ${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}\n\n")
-        sb.append("🔄 Başka kart okumak için tekrar yaklaştırın")
+        sb.append("🔄 Başka NFC/RFID kart okumak için tekrar yaklaştırın")
 
         textViewInfo.text = sb.toString()
         
         // Başarılı okuma toast'ı
-        Toast.makeText(this, "✅ NFC kart başarıyla okundu!", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "✅ NFC/RFID kart başarıyla okundu!", Toast.LENGTH_SHORT).show()
+    }
+
+    // RFID destekli kart tipi tespiti
+    private fun detectCardTypeWithRfid(tag: Tag): String {
+        val techList = tag.techList
+        val uid = tag.id
+        
+        return when {
+            // ISO 15693 RFID kartları
+            techList.contains("android.nfc.tech.NfcV") -> {
+                "📡 ISO 15693 RFID Kartı (13.56 MHz HF)"
+            }
+            // T.C. Kimlik kartı (ISO-DEP + NfcB)
+            techList.contains("android.nfc.tech.IsoDep") && 
+            techList.contains("android.nfc.tech.NfcB") -> {
+                "🇹🇷 T.C. Kimlik Kartı (ISO 14443-4 Type B)"
+            }
+            // Kredi kartı (ISO-DEP + NfcA)
+            techList.contains("android.nfc.tech.IsoDep") && 
+            techList.contains("android.nfc.tech.NfcA") -> {
+                "💳 Kredi/Banka Kartı (ISO 14443-4 Type A)"
+            }
+            // Mifare Classic (RFID uyumlu)
+            techList.contains("android.nfc.tech.MifareClassic") -> {
+                "🎫 Mifare Classic (NFC/RFID Hibrit - 13.56 MHz)"
+            }
+            // Mifare Ultralight (RFID uyumlu)
+            techList.contains("android.nfc.tech.MifareUltralight") -> {
+                "🏷️ Mifare Ultralight (NFC/RFID Hibrit - 13.56 MHz)"
+            }
+            // FeliCa (Japonya RFID sistemi)
+            techList.contains("android.nfc.tech.NfcF") -> {
+                "🟡 FeliCa RFID Kartı (JIS X 6319-4 - 13.56 MHz)"
+            }
+            // NDEF
+            techList.contains("android.nfc.tech.Ndef") -> {
+                "📱 NDEF Kartı (NFC Forum Standardı)"
+            }
+            // NfcA (Type A)
+            techList.contains("android.nfc.tech.NfcA") -> {
+                "🔵 ISO 14443 Type A Kartı (NFC/RFID - 13.56 MHz)"
+            }
+            // NfcB (Type B)
+            techList.contains("android.nfc.tech.NfcB") -> {
+                "🔴 ISO 14443 Type B Kartı (NFC/RFID - 13.56 MHz)"
+            }
+            else -> {
+                "❓ Bilinmeyen NFC/RFID Kartı"
+            }
+        }
+    }
+
+    // Frekans ve teknoloji analizi
+    private fun analyzeFrequencyAndTechnology(tag: Tag): String {
+        val sb = StringBuilder()
+        val techList = tag.techList
+        
+        sb.append("🔬 Frekans: 13.56 MHz (HF - High Frequency)\n")
+        sb.append("📡 Protokol Ailesi: ISO/IEC 18000-3\n")
+        
+        when {
+            techList.contains("android.nfc.tech.NfcV") -> {
+                sb.append("🎯 Ana Standard: ISO 15693 (RFID)\n")
+                sb.append("📏 Okuma Mesafesi: 10cm - 1m\n")
+                sb.append("⚡ Veri Hızı: 1.6 - 26.7 kbps\n")
+                sb.append("🔋 Güç: Pasif (okuyucudan beslenir)\n")
+                sb.append("💡 Kullanım: Erişim kontrolü, envanter, hayvan takibi\n")
+            }
+            techList.contains("android.nfc.tech.MifareClassic") || 
+            techList.contains("android.nfc.tech.MifareUltralight") -> {
+                sb.append("🎯 Ana Standard: ISO 14443 Type A (NFC/RFID Hibrit)\n")
+                sb.append("📏 Okuma Mesafesi: 2-10 cm\n")
+                sb.append("⚡ Veri Hızı: 106 kbps\n")
+                sb.append("🔋 Güç: Pasif (okuyucudan beslenir)\n")
+                sb.append("💡 Kullanım: Toplu taşıma, erişim kontrolü, ödeme\n")
+            }
+            techList.contains("android.nfc.tech.NfcF") -> {
+                sb.append("🎯 Ana Standard: JIS X 6319-4 (FeliCa RFID)\n")
+                sb.append("📏 Okuma Mesafesi: 2-10 cm\n")
+                sb.append("⚡ Veri Hızı: 212/424 kbps\n")
+                sb.append("🔋 Güç: Pasif (okuyucudan beslenir)\n")
+                sb.append("💡 Kullanım: Japonya ödeme sistemleri, oyun kartları\n")
+            }
+            techList.contains("android.nfc.tech.IsoDep") -> {
+                sb.append("🎯 Ana Standard: ISO 14443-4 (Akıllı Kart/RFID)\n")
+                sb.append("📏 Okuma Mesafesi: 2-10 cm\n")
+                sb.append("⚡ Veri Hızı: 106-848 kbps\n")
+                sb.append("🔋 Güç: Pasif (okuyucudan beslenir)\n")
+                sb.append("💡 Kullanım: Kimlik kartları, kredi kartları, güvenli ödeme\n")
+            }
+            else -> {
+                sb.append("🎯 Ana Standard: Genel NFC/RFID (ISO 14443)\n")
+                sb.append("📏 Okuma Mesafesi: 2-10 cm\n")
+                sb.append("⚡ Veri Hızı: 106-424 kbps\n")
+                sb.append("🔋 Güç: Pasif (okuyucudan beslenir)\n")
+                sb.append("💡 Kullanım: Genel amaçlı NFC/RFID\n")
+            }
+        }
+        
+        return sb.toString()
+    }
+
+    // RFID özet analizi
+    private fun generateRfidSummary(tag: Tag): String {
+        val sb = StringBuilder()
+        val techList = tag.techList
+        val uid = tag.id
+        
+        sb.append("📊 Kart Kategorisi: ")
+        when {
+            techList.contains("android.nfc.tech.NfcV") -> {
+                sb.append("RFID Kartı (ISO 15693)\n")
+                sb.append("🔹 RFID Tipi: Yüksek Frekanslı (HF)\n")
+                sb.append("🔹 Uygulama Alanı: Erişim kontrolü, envanter yönetimi\n")
+                sb.append("🔹 Avantajlar: Uzun menzilli okuma, çoklu kart okuma\n")
+                sb.append("🔹 Dezavantajlar: NFC telefon uygulamaları ile sınırlı uyumluluk\n")
+            }
+            techList.contains("android.nfc.tech.MifareClassic") -> {
+                sb.append("NFC/RFID Hibrit Kartı (Mifare)\n")
+                sb.append("🔹 RFID Tipi: Yüksek Frekanslı (HF) - NFC Uyumlu\n")
+                sb.append("🔹 Uygulama Alanı: Toplu taşıma, kampüs kartları\n")
+                sb.append("🔹 Avantajlar: Yaygın kullanım, güvenli sektör yapısı\n")
+                sb.append("🔹 Dezavantajlar: Eski şifreleme (CRYPTO1)\n")
+            }
+            techList.contains("android.nfc.tech.MifareUltralight") -> {
+                sb.append("NFC/RFID Hibrit Kartı (Ultralight)\n")
+                sb.append("🔹 RFID Tipi: Yüksek Frekanslı (HF) - NFC Uyumlu\n")
+                sb.append("🔹 Uygulama Alanı: Tek kullanımlık biletler, etiketler\n")
+                sb.append("🔹 Avantajlar: Düşük maliyet, basit yapı\n")
+                sb.append("🔹 Dezavantajlar: Sınırlı güvenlik, küçük hafıza\n")
+            }
+            techList.contains("android.nfc.tech.NfcF") -> {
+                sb.append("RFID Kartı (FeliCa)\n")
+                sb.append("🔹 RFID Tipi: Yüksek Frekanslı (HF) - Japonya Standardı\n")
+                sb.append("🔹 Uygulama Alanı: Ödeme sistemleri, oyun kartları\n")
+                sb.append("🔹 Avantajlar: Yüksek hız, güvenli\n")
+                sb.append("🔹 Dezavantajlar: Geografik olarak sınırlı (Japonya)\n")
+            }
+            techList.contains("android.nfc.tech.IsoDep") -> {
+                sb.append("Akıllı RFID Kartı (ISO-DEP)\n")
+                sb.append("🔹 RFID Tipi: Yüksek Frekanslı (HF) - Akıllı Kart\n")
+                sb.append("🔹 Uygulama Alanı: Kimlik, ödeme, güvenlik\n")
+                sb.append("🔹 Avantajlar: Yüksek güvenlik, çok amaçlı\n")
+                sb.append("🔹 Dezavantajlar: Karmaşık, pahalı\n")
+            }
+            else -> {
+                sb.append("Genel NFC/RFID Kartı\n")
+                sb.append("🔹 RFID Tipi: Yüksek Frekanslı (HF)\n")
+                sb.append("🔹 Uygulama Alanı: Çeşitli\n")
+            }
+        }
+        
+        sb.append("\n🔍 UID Analizi:\n")
+        when {
+            uid.size == 4 -> {
+                sb.append("• Single Size UID (4 byte) - Standart RFID\n")
+            }
+            uid.size == 7 -> {
+                sb.append("• Double Size UID (7 byte) - Gelişmiş RFID\n")
+            }
+            uid.size == 10 -> {
+                sb.append("• Triple Size UID (10 byte) - Yüksek Güvenlik RFID\n")
+            }
+            else -> {
+                sb.append("• Özel UID Boyutu (${uid.size} byte)\n")
+            }
+        }
+        
+        if (uid.isNotEmpty()) {
+            val manufacturerByte = uid[0].toInt() and 0xFF
+            val manufacturer = when (manufacturerByte) {
+                0x04 -> "NXP Semiconductors"
+                0x01 -> "Motorola"
+                0x02 -> "ST Microelectronics"
+                0x03 -> "Hitachi"
+                0x05 -> "Infineon Technologies"
+                0x06 -> "Cylink"
+                0x07 -> "Texas Instruments"
+                0x08 -> "Fujitsu"
+                0x09 -> "Matsushita"
+                0x0A -> "NEC"
+                0x0B -> "Oki Electric"
+                0x0C -> "Toshiba"
+                0x0D -> "Mitsubishi"
+                0x0E -> "Samsung"
+                0x0F -> "Hyundai"
+                else -> "Bilinmeyen (0x${String.format("%02X", manufacturerByte)})"
+            }
+            sb.append("• Üretici: $manufacturer\n")
+        }
+        
+        sb.append("\n⚠️ Desteklenmeyen RFID Tipleri:\n")
+        sb.append("• 125 kHz LF-RFID (Düşük Frekans) - Eski erişim kartları\n")
+        sb.append("• 915 MHz UHF-RFID (Ultra Yüksek Frekans) - Uzun menzil\n")
+        sb.append("• 2.45 GHz Mikrodalga RFID - Endüstriyel uygulamalar\n")
+        sb.append("\n💡 Not: Bu uygulama sadece 13.56 MHz NFC/RFID kartları okuyabilir.")
+        
+        return sb.toString()
     }
 
     // T.C. Kimlik kartı için detaylı ham veri dump
@@ -517,55 +819,6 @@ class MainActivity : AppCompatActivity() {
         }
         
         return sb.toString()
-    }
-
-    // Kart tipini tespit et
-    private fun detectCardType(tag: Tag): String {
-        val techList = tag.techList
-        
-        return when {
-            // T.C. Kimlik kartı (ISO-DEP + NfcB)
-            techList.contains("android.nfc.tech.IsoDep") && 
-            techList.contains("android.nfc.tech.NfcB") -> {
-                "🇹🇷 T.C. Kimlik Kartı (ISO 14443-4 Type B)"
-            }
-            // Kredi kartı (ISO-DEP + NfcA)
-            techList.contains("android.nfc.tech.IsoDep") && 
-            techList.contains("android.nfc.tech.NfcA") -> {
-                "💳 Kredi/Banka Kartı (ISO 14443-4 Type A)"
-            }
-            // Mifare Classic
-            techList.contains("android.nfc.tech.MifareClassic") -> {
-                "🎫 Mifare Classic (Toplu Taşıma/Erişim Kartı)"
-            }
-            // Mifare Ultralight
-            techList.contains("android.nfc.tech.MifareUltralight") -> {
-                "🏷️ Mifare Ultralight (NFC Etiketi)"
-            }
-            // NDEF
-            techList.contains("android.nfc.tech.Ndef") -> {
-                "📱 NDEF Kartı (NFC Forum)"
-            }
-            // NfcA (Type A)
-            techList.contains("android.nfc.tech.NfcA") -> {
-                "🔵 ISO 14443 Type A Kartı"
-            }
-            // NfcB (Type B)
-            techList.contains("android.nfc.tech.NfcB") -> {
-                "🔴 ISO 14443 Type B Kartı"
-            }
-            // NfcF (FeliCa)
-            techList.contains("android.nfc.tech.NfcF") -> {
-                "🟡 FeliCa Kartı (JIS X 6319-4)"
-            }
-            // NfcV (ISO 15693)
-            techList.contains("android.nfc.tech.NfcV") -> {
-                "🟢 ISO 15693 Kartı (Vicinity)"
-            }
-            else -> {
-                "❓ Bilinmeyen Kart Tipi"
-            }
-        }
     }
 
     // Yardımcı fonksiyonlar
