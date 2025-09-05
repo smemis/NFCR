@@ -27,6 +27,9 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec as SecretKeySpecMac
 
 class MainActivity : AppCompatActivity() {
 
@@ -46,8 +49,8 @@ class MainActivity : AppCompatActivity() {
         val dateOfExpiry: String
     ) {
         fun isValid(): Boolean {
-            return documentNumber.length >= 9 && 
-                   dateOfBirth.length == 6 && 
+            return documentNumber.length >= 9 &&
+                   dateOfBirth.length == 6 &&
                    dateOfExpiry.length == 6
         }
         
@@ -953,58 +956,48 @@ class MainActivity : AppCompatActivity() {
         return sb.toString()
     }
 
-    // BAC anahtarlarını türet
+    // BAC anahtarlarını türet - Düzeltilmiş versiyon
     private fun deriveBacKeys(mrzData: MrzData): BacKeys {
-        // MRZ string oluştur (belge numarası + doğum tarihi + son kullanma tarihi)
-        val mrzString = mrzData.toMrzString()
-        
-        // SHA-1 hash hesapla
         val md = MessageDigest.getInstance("SHA-1")
+        
+        // Step 1: MRZ string oluştur ve hash al
+        val mrzString = mrzData.toMrzString()
         val mrzHash = md.digest(mrzString.toByteArray())
         
-        // İlk 16 byte'ı al ve BAC anahtarlarını türet
-        val kSeed = mrzHash.take(16).toByteArray()
+        // Step 2: K_SEED anahtarını türet
+        val kSeed = mrzHash.copyOf(16)
         
-        // K_ENC = SHA-1(K_SEED || 00000001)[0..7]
-        val kEncSeed = kSeed + byteArrayOf(0x00, 0x00, 0x00, 0x01)
-        val kEncHash = md.digest(kEncSeed)
-        val kEnc = kEncHash.take(8).toByteArray()
+        // Step 3: K_ENC anahtarını türet (SHA-1(K_SEED || 0x00000001))
+        md.reset()
+        md.update(kSeed)
+        md.update(byteArrayOf(0x00, 0x00, 0x00, 0x01))
+        val kEncHash = md.digest()
         
-        // K_MAC = SHA-1(K_SEED || 00000002)[0..7] 
-        val kMacSeed = kSeed + byteArrayOf(0x00, 0x00, 0x00, 0x02)
-        val kMacHash = md.digest(kMacSeed)
-        val kMac = kMacHash.take(8).toByteArray()
-        
-        return BacKeys(kEnc, kMac)
+        // Step 4: K_MAC anahtarını türet (SHA-1(K_SEED || 0x00000002))
+        md.reset()
+        md.update(kSeed)
+        md.update(byteArrayOf(0x00, 0x00, 0x00, 0x02))
+        val kMacHash = md.digest()
+
+        return BacKeys(kEncHash.copyOf(8), kMacHash.copyOf(8))
     }
 
-    // Authentication data oluştur
+    // Authentication data oluştur - Düzeltilmiş versiyon
     private fun createAuthenticationData(rndIfd: ByteArray, rndIcc: ByteArray, kIfd: ByteArray, bacKeys: BacKeys): ByteArray {
-        try {
-            // S = RND.IFD || RND.ICC || K.IFD
-            val s = rndIfd + rndIcc + kIfd
-            
-            // E(K_ENC, S) - 3DES şifreleme
-            val cipher = Cipher.getInstance("DESede/ECB/NoPadding")
-            val keySpec = SecretKeySpec(bacKeys.kEnc + bacKeys.kEnc.take(8).toByteArray(), "DESede") // 24 byte key
-            cipher.init(Cipher.ENCRYPT_MODE, keySpec)
-            
-            // Padding ekle (8 byte'ın katı olması için)
-            val paddedS = padData(s, 8)
-            val eifd = cipher.doFinal(paddedS)
-            
-            // MAC hesapla
-            val mac = calculateMac(eifd, bacKeys.kMac)
-            
-            return eifd + mac
-            
-        } catch (e: Exception) {
-            // Basit XOR şifreleme (fallback)
-            val s = rndIfd + rndIcc + kIfd
-            return s.mapIndexed { index, byte ->
-                (byte.toInt() xor bacKeys.kEnc[index % bacKeys.kEnc.size].toInt()).toByte()
-            }.toByteArray()
-        }
+        val s = rndIfd + rndIcc + kIfd
+        
+        // 3DES şifreleme
+        val cipher = Cipher.getInstance("DESede/ECB/NoPadding")
+        val keyBytes = bacKeys.kEnc + bacKeys.kEnc.copyOf(8)
+        val keySpec = SecretKeySpec(keyBytes, "DESede")
+        cipher.init(Cipher.ENCRYPT_MODE, keySpec)
+        
+        val eifd = cipher.doFinal(s)
+        
+        // MAC hesapla
+        val mac = calculateMac(eifd, bacKeys.kMac)
+        
+        return eifd + mac
     }
 
     // Şifrelenmiş verileri oku
@@ -1113,15 +1106,18 @@ class MainActivity : AppCompatActivity() {
     // Veri şifresini çöz
     private fun decryptData(encryptedData: ByteArray, key: ByteArray): ByteArray {
         return try {
-            val cipher = Cipher.getInstance("DES/ECB/NoPadding")
-            val keySpec = SecretKeySpec(key, "DES")
+            val cipher = Cipher.getInstance("DESede/ECB/NoPadding")
+            val keyBytes = key + key.copyOf(8)
+            val keySpec = SecretKeySpec(keyBytes, "DESede")
             cipher.init(Cipher.DECRYPT_MODE, keySpec)
             cipher.doFinal(encryptedData)
         } catch (e: Exception) {
-            // Basit XOR çözme (fallback)
-            encryptedData.mapIndexed { index, byte ->
-                (byte.toInt() xor key[index % key.size].toInt()).toByte()
-            }.toByteArray()
+            // Basit XOR çözme (fallback) - Artık kullanılmıyor
+            val decrypted = ByteArray(encryptedData.size)
+            for (i in encryptedData.indices) {
+                decrypted[i] = (encryptedData[i].toInt() xor key[i % key.size].toInt()).toByte()
+            }
+            decrypted
         }
     }
 
@@ -1236,13 +1232,13 @@ class MainActivity : AppCompatActivity() {
         return data + ByteArray(padding) { 0x00 }
     }
 
+    // MAC hesapla - Düzeltilmiş versiyon
     private fun calculateMac(data: ByteArray, key: ByteArray): ByteArray {
-        // Basit MAC hesaplama (gerçek MAC algoritması daha karmaşık)
-        val mac = ByteArray(8)
-        for (i in mac.indices) {
-            mac[i] = (data[i % data.size].toInt() xor key[i % key.size].toInt()).toByte()
-        }
-        return mac
+        val mac = Mac.getInstance("ISO9797ALG3MAC")
+        val keySpec = SecretKeySpecMac(key + key.copyOf(8), "DESede")
+        mac.init(keySpec, null) // IV için null kullanılıyor, ECB modunda olduğu için
+        mac.update(data)
+        return mac.doFinal()
     }
 
     // ASCII decode denemesi
