@@ -432,7 +432,7 @@ class MainActivity : AppCompatActivity() {
                             sb.append("  System Info: Desteklenmiyor\n")
                         }
                         
-                        val readBlock = byteArrayOf(0x00, 0x20, *uid, 0x00)
+                        val readBlock = byteArrayOf(0x00.toByte(), 0x20.toByte(), *uid, 0x00.toByte())
                         try {
                             val blockResponse = nfcV.transceive(readBlock)
                             sb.append("  Blok 0 Verisi: ${bytesToHex(blockResponse)}\n")
