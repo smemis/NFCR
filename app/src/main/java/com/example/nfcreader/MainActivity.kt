@@ -1063,7 +1063,9 @@ class MainActivity : AppCompatActivity() {
         
         // EF.DG2 (Fotoğraf) okuma denemesi
         try {
-            val selectDg2 = byteArrayOf(0x00, 0xA4, 0x02, 0x0C, 0x02, 0x01, 0x02)
+val selectDg2 = byteArrayOf(
+    0x00.toByte(), 0xA4.toByte(), 0x02.toByte(), 0x0C.toByte(), 0x02.toByte(), 0x01.toByte(), 0x02.toByte()
+)
             val dg2Response = isoDep.transceive(selectDg2)
             sb.append("📂 EF.DG2 (Fotoğraf) Seçimi: ${interpretStatusWord(dg2Response)}\n")
             
@@ -1165,11 +1167,11 @@ class MainActivity : AppCompatActivity() {
                 sb.append("📂 Dosya: $fileName (ID: 0x${String.format("%04X", fileId)})\n")
                 
                 // Dosya seçimi
-                val selectFile = byteArrayOf(
-                    0x00, 0xA4, 0x02, 0x0C, 0x02,
-                    (fileId shr 8).toByte(),
-                    (fileId and 0xFF).toByte()
-                )
+val selectFile = byteArrayOf(
+    0x00.toByte(), 0xA4.toByte(), 0x02.toByte(), 0x0C.toByte(), 0x02.toByte(),
+    (fileId shr 8).toByte(),
+    (fileId and 0xFF).toByte()
+)
                 sb.append("📤 SELECT: ${bytesToHex(selectFile)}\n")
                 val selectResponse = isoDep.transceive(selectFile)
                 sb.append("📥 RESPONSE: ${bytesToHex(selectResponse)}\n")
@@ -1178,7 +1180,10 @@ class MainActivity : AppCompatActivity() {
                 // Eğer seçim başarılı ise, ilk birkaç byte'ı okumaya çalış
                 if (isSuccessResponse(selectResponse)) {
                     try {
-                        val readFile = byteArrayOf(0x00, 0xB0, 0x00, 0x00, 0x10) // 16 byte oku
+
+                        val readFile = byteArrayOf(
+    0x00.toByte(), 0xB0.toByte(), 0x00.toByte(), 0x00.toByte(), 0x10.toByte()
+)// 16 byte oku
                         sb.append("📤 READ: ${bytesToHex(readFile)}\n")
                         val readResponse = isoDep.transceive(readFile)
                         sb.append("📥 DATA: ${bytesToHex(readResponse)}\n")
